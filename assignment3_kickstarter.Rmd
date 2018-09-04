@@ -1,0 +1,703 @@
+---
+title: "Assignment 3: Kickstarter Projects"
+author: hj
+date: 2017-04-04
+always_allow_html: yes
+output: 
+  html_document:
+    keep_md: true
+---
+
+Text Mining Kickstarter Projects
+================================
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+Kickstarter is an American public-benefit corporation based in Brooklyn, New York, that maintains a global crowd funding platform focused on creativity.  The company's stated mission is to "help bring creative projects to life". 
+
+Kickstarter has reportedly received more than $1.9 billion in pledges from 9.4 million backers to fund 257,000 creative projects, such as films, music, stage shows, comics, journalism, video games, technology and food-related projects.
+
+For this assignment, I am asking you to analyze the descriptions of kickstarter projects to identify commonalities of successful (and unsuccessful projects) using the text mining techniques we covered in the past two lectures. 
+
+## Data
+
+The dataset for this assignment is taken from [webroboto.io ?€˜s repository](https://webrobots.io/kickstarter-datasets/). They developed a scrapper robot that crawls all Kickstarter projects monthly since 2009. We will just take data from the most recent crawl on 2018-02-15.
+
+To simplify your task, I have downloaded the files and partially cleaned the scraped data. In particular, I converted several JSON columns, corrected some obvious data issues, and removed some variables that are not of interest (or missing frequently). I have also  subsetted the data to only contain projects originating in the United States (to have only English language and USD denominated projects).
+
+The data is contained in the file `kickstarter_projects.csv` and contains about 150,000 projects and about 20 variables.
+
+## Tasks for the Assignment
+```{r warning=FALSE}
+library(tidyverse)
+library(leaflet)
+library(ggplot2)
+library(stringr)
+library(rgdal)
+library(maps)
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(tidytext)
+library(babynames)
+library(plotrix)
+library(ggthemes)
+library(quanteda)
+library(readtext)
+library(glue)
+library(plotly)
+library(geojsonio)
+```
+
+
+### 1. Identifying Successful Projects
+```{r}
+kick <- read.csv("kickstarter_projects.csv")
+```
+
+#### a) Success by Category
+
+There are several ways to identify success of a project:  
+  - State (`state`): Whether a campaign was successful or not.   
+  - Pledged Amount (`pledged`)   
+  - Achievement Ratio: Create a variable `achievement_ratio` by calculating the percentage of the original monetary `goal` reached by the actual amount `pledged` (that is `pledged`\\`goal` *100).    
+  - Number of backers (`backers_count`)  
+  - How quickly the goal was reached (difference between `launched_at` and `state_changed_at`) for those campaigns that were successful.  
+
+Use one or more of these measures to visually summarize which categories were most successful in attracting funding on kickstarter. Briefly summarize your findings.
+
+Through the plots below, we can see that 'games' is the most successful category in terms of ratio.
+```{r}
+
+kick <- kick[(which(nchar(as.character(str_trim(kick$top_category))) < 17)),]
+kick <- kick[(which(nchar(as.character(str_trim(kick$top_category))) > 0)),]
+
+
+
+df <- data.frame(id = character(148217))
+#reduced <- kick[sample(nrow(kick), 2000), ]
+df$Ratio <- as.numeric(kick$pledged)/as.numeric(kick$goal) *100
+df$Type <- kick$top_category
+df$State <- kick$location_state
+
+```
+
+```{r}
+plot <- ggplot(df[df$Ratio>1,], aes(x=Type, y=Ratio, fill=Type)) +
+  geom_bar(stat= "identity") + ggtitle("Types of Project and their Achievement Ratio") +
+  theme_hc() + scale_colour_hc()+ theme(axis.text.x = element_text(angle = 90, hjust = 1))
+plot
+
+#Through the plots below, we can see that 'games' is the most successful category in terms of ratio.
+```
+```{r}
+
+dd <- aggregate(as.numeric(df$Ratio), by=list(df$Type), FUN=mean, na.rm=TRUE)
+
+colnames(dd) <- c('Type', 'Ratio')
+
+plotdd <- ggplot(dd, aes(x=Type, y=Ratio, fill=Type)) +
+  geom_bar(stat= "identity") + ggtitle("Types of Project and their Mean Achievement Ratio") +
+  theme_hc() + scale_colour_hc()+ theme(axis.text.x = element_text(angle = 90, hjust = 1))
+plotdd
+
+```
+
+
+#### **BONUS ONLY:** b) Success by Location
+
+Now, use the location information to calculate the total number of successful projects by state (if you are ambitious, normalize by population). Also, identify the Top 50 "innovative" cities in the U.S. (by whatever measure you find plausible). Provide a leaflet map showing the most innovative states and cities in the U.S. on a single map based on these information.
+```{r}
+my_counts <- as.data.frame(table(df$State))
+
+pal = colorFactor("Paired", domain = my_counts$Freq)
+color_prop = pal(my_counts$Freq)
+
+library(maps)
+mapStates = map("state", fill = TRUE, plot = FALSE)
+
+content <- paste("number of projects = ", my_counts$Freq, "<br/>")
+
+leaflet(data = mapStates) %>% addTiles() %>%
+  addPolygons(color = ~pal(my_counts$Freq), stroke = FALSE,popup = content ) 
+
+
+#Map shows the number of Kickstarter projects each states has. Colors are based on number of projects.
+
+
+```
+
+### 2. Writing your success story
+
+Each project contains a `blurb` -- a short description of the project. While not the full description of the project, the short headline is arguably important for inducing interest in the project (and ultimately popularity and success). Let's analyze the text.
+
+#### a) Cleaning the Text and Word Cloud
+
+To reduce the time for analysis, select the 1000 most successful projects and a sample of 1000 unsuccessful projects. Use the cleaning functions introduced in lecture (or write your own in addition) to remove unnecessary words (stop words), syntax, punctuation, numbers, white space etc. Note, that many projects use their own unique brand names in upper cases, so try to remove these fully capitalized words as well (since we are aiming to identify common words across descriptions). Stem the words left and complete the stems. Create a document-term-matrix.
+
+Provide a word cloud of the most frequent or important words (your choice which frequency measure you choose) among the most successful projects.
+```{r}
+kick$ratio <- as.numeric(kick$pledged)/as.numeric(kick$goal) *100
+kick <-kick[order(kick$ratio),]
+
+best <- tail(kick, 1000)
+worst <- head(kick, 1000)
+bw <- rbind(best, worst)
+
+df_title <- data.frame(doc_id=row.names(best),
+                       text=best$blurb)
+
+df_source <- DataframeSource(df_title)
+# Convert df_source to a corpus: df_corpus
+## Note: there are two types (VCopus vs PCorpus)
+df_corpus <- VCorpus(df_source)
+# Examine df_corpus
+df_corpus
+
+# You can add your own functions as well - careful!
+removeNumPunct <- function(x){gsub("[^[:alpha:][:space:]]*", "", x)}
+clean_corpus <- function(corpus){
+# corpus <- tm_map(corpus, removePunctuation)
+  corpus <- tm_map(corpus, content_transformer(tolower))
+
+  corpus <- tm_map(corpus, removeWords, c(stopwords("en")))  
+    # We could add more stop words as above
+  corpus <- tm_map(corpus, removeNumbers)
+  corpus <- tm_map(corpus, content_transformer(removeNumPunct))
+  corpus <- tm_map(corpus, stripWhitespace)
+  return(corpus)
+}
+# Apply your customized function to the SOTU: sotu_clean
+clean <- clean_corpus(df_corpus)
+
+```
+
+
+```{r}
+stemCompletion2 <- function(x, dictionary) {
+   x <- unlist(strsplit(as.character(x), " "))
+    # # Oddly, stemCompletion completes an empty string to
+      # a word in dictionary. Remove empty string to avoid issue.
+   x <- x[x != ""]
+   x <- stemCompletion(x, dictionary=dictionary)
+   x <- paste(x, sep="", collapse=" ")
+   PlainTextDocument(stripWhitespace(x))
+}
+
+
+stemmed <- tm_map(clean, stemDocument)
+stemmed[[1000]]$content
+comp <- lapply( stemmed, stemCompletion2, 
+                     dictionary=clean)
+```
+```{r}
+comp[[1000]]$content
+comp <- as.VCorpus(comp)
+dtm <- DocumentTermMatrix(comp) 
+
+
+matr <- as.matrix(dtm)
+
+
+
+
+tdm <- TermDocumentMatrix(comp)
+
+
+tmat <- as.matrix(tdm)
+
+```
+
+```{r warning=FALSE}
+td <- tidy(tdm)
+
+meta <- as_data_frame(str_split_fixed(td$document, "_", n=3))
+
+# Merge on
+td <- as_data_frame(cbind(td, meta))
+# Show
+td
+
+
+ttf_idf <-  td %>%
+                bind_tf_idf(term, document, count) %>%  
+                arrange(desc(tf_idf)) 
+ttf_idf
+
+
+tff <- ttf_idf %>% top_n(n = 1, wt = tf_idf) 
+
+
+set.seed(1104)
+ 
+
+tff <- tff %>% 
+  filter(!term %in% tolower(babynames$name))
+
+
+
+# Create purple_orange
+purple_orange <- brewer.pal(10, "PuOr")
+# Drop 2 faintest colors
+purple_orange <- purple_orange[-(1:2)]
+# Create a wordcloud with purple_orange palette
+wordcloud(tff$term, tff$tf, 
+      max.words = 50, colors = purple_orange)
+
+
+#wordcloud for top 1000 projects
+```
+```{r}
+df_title1 <- data.frame(doc_id=row.names(worst),
+                       text=worst$blurb)
+
+df_source1 <- DataframeSource(df_title1)
+# Convert df_source to a corpus: df_corpus
+## Note: there are two types (VCopus vs PCorpus)
+df_corpus1 <- VCorpus(df_source1)
+
+
+
+# Apply your customized function to the SOTU: sotu_clean
+clean1 <- clean_corpus(df_corpus1)
+stemmed1 <- tm_map(clean1, stemDocument)
+stemmed1[[1000]]$content
+comp1 <- lapply( stemmed1, stemCompletion2, 
+                     dictionary=clean1)
+
+comp1[[1000]]$content
+comp1 <- as.VCorpus(comp1)
+dtm1 <- DocumentTermMatrix(comp1) 
+
+
+matr1 <- as.matrix(dtm1)
+
+tdm1 <- TermDocumentMatrix(comp1)
+
+
+tmat1 <- as.matrix(tdm1)
+
+td1 <- tidy(tdm1)
+
+meta <- as_data_frame(str_split_fixed(td1$document, "_", n=3))
+
+# Merge on
+td1 <- as_data_frame(cbind(td1, meta))
+
+
+
+ttf_idf1 <-  td1 %>%
+                bind_tf_idf(term, document, count) %>%  
+                arrange(desc(tf_idf)) 
+
+
+
+tff1 <- ttf_idf1 %>% top_n(n = 1, wt = tf_idf) 
+
+
+set.seed(1103)
+
+tff1 <- tff1 %>% 
+  filter(!term %in% tolower(babynames$name))
+```
+
+
+#### b) Success in words
+
+Provide a pyramid plot to show how the words between successful and unsuccessful projects differ in frequency. A selection of 10 - 20 top words is sufficient here.  
+
+Pyramid plot between words commonly used by BOTH good and bad projects.
+```{r}
+tff$cat <- 'good'
+tff1$cat <- 'bad'
+
+
+tff2 <- rbind(tff[tff$term %in% tff1$term,], tff1[tff1$term %in% tff$term,])
+
+
+
+tff2 <- tff2[order(-tff2$count),]
+
+tff25 <- head(tff2, 12)
+
+
+ggplot(df, aes(x=reorder(term, count))) +
+  geom_bar(data= filter(tff2[tff2$term %in% tff25$term,], cat == 'good'), aes(y=count, fill=cat), stat="identity") +
+  geom_bar(data=filter(tff2[tff2$term %in% tff25$term,], cat == 'bad'), aes(y=-count, fill=cat), stat="identity") +
+  geom_hline(yintercept=0, colour="white", lwd=1) +
+  coord_flip(ylim=c(-5,5)) + 
+  scale_y_continuous(breaks=seq(-4,4,2), labels=c(4,2,0,2,4)) +
+  labs(y="Percent", x="Country") +
+  ggtitle("        Bad                                                 Good") +theme_economist() +
+  scale_fill_pander()
+
+
+#pyramid plot between words commonly used by BOTH good and bad projects.
+```
+
+
+#### c) Simplicity as a virtue
+
+These blurbs are short in length (max. 150 characters) but let's see whether brevity and simplicity still matters. Calculate a readability measure (Flesh Reading Ease, Flesh Kincaid or any other comparable measure) for the texts. Visualize the relationship between the readability measure and one of the measures of success. Briefly comment on your finding.
+
+It is hard to tell whether there is a relationship. The worst projects' grade level seem a little bit more varied,
+but there seems to not be an obvious pattern
+
+```{r}
+
+bw_corpus <- corpus(as.character(bw$blurb))
+
+FRE2 <- textstat_readability(bw_corpus,
+              measure=c('Flesch.Kincaid'))
+FRE2$ratio <- bw$ratio[0:-1]
+
+
+ggplot(data=FRE2[FRE2$ratio<8000], aes(x=ratio,y=Flesch.Kincaid)) +
+  geom_smooth() + geom_point(alpha = 0.5) +
+  guides(size=FALSE) + theme_pander() +   scale_fill_pander()+
+  xlab("Success Ratio") + ylab("Flesch-Kincaid Grade Level") +ggtitle("    Flesh-Kincaid against success ratio")
+
+#It is hard to tell whether there is a relationship. The worst projects' grade level seem a little bit more varied
+#but there seems to not be an obvious pattern
+```
+
+### 3. Sentiment
+
+Now, let's check whether the use of positive / negative words or specific emotions helps a project to be successful. 
+
+#### a) Stay positive
+
+Calculate the tone of each text based on the positive and negative words that are being used. You can rely on the Hu & Liu dictionary provided in lecture or use the Bing dictionary contained in the tidytext package (`tidytext::sentiments`). Visualize the relationship between tone of the document and success. Briefly comment.
+
+The scatterplot does not show any obvious relationships between sentiment and success ratio
+The bar chart shows that the sentiment distribution between good ratios and bad ratois are similar
+
+```{r}
+#read data from downloaded Hu and Liu dictionary. Source from #https://www.cs.uic.edu/~liub/FBS/sentiment-analysis.html#lexicon
+pos <- read.table("opinion-lexicon/positive-words.txt", as.is=T, fill=TRUE)
+neg <- read.table("opinion-lexicon/negative-words.txt", as.is=T, fill=TRUE)
+
+pos <- tail(pos, 2007)
+neg <- tail(neg, 4783)
+
+bw_corpus <- tolower(bw_corpus)
+
+sentiment <- function(words=c("really great good stuff bad")){
+  require(quanteda)
+  tok <- quanteda::tokens(words)
+  pos.count <- sum(tok[[1]]%in%pos[,1])
+
+  neg.count <- sum(tok[[1]]%in%neg[,1])
+
+  out <- (pos.count - neg.count)/(pos.count+neg.count)
+ 
+  return(out)
+}
+
+sentiment(bw_corpus[50])
+
+bw_corpus[50]
+
+sentiments<- c()
+
+for(i in 1:length(bw_corpus) ){
+  
+    sentiments[i] <-sentiment(bw_corpus[i])
+}
+```
+```{r}
+bw$cat[1:1000] <- 'good'
+bw$cat[1001:2000] <- 'bad'
+bw$sentiment <- sentiments
+
+spl <- ggplot(bw, aes(x = ratio, y = sentiment)) + 
+  geom_point(aes(color = cat)) + xlim(c(0,150000))
+
+spl + theme_economist() + scale_color_economist()
+
+
+ggplot(bw, aes(x=sentiment, fill=cat)) +
+    geom_histogram(binwidth=.5, position="dodge") + theme_economist() + scale_color_economist()
+
+
+#The scatterplot does not show any obvious relationships between sentiment and success ratio
+#The bar chart shows that the sentiment distribution between good ratios and bad ratois are similar
+```
+
+
+#### b) Positive vs negative
+
+Segregate all 2,000 blurbs into positive and negative texts based on their polarity score calculated in step (a). Now, collapse the positive and negative texts into two larger documents. Create a document-term-matrix based on this collapsed set of two documents. Generate a comparison cloud showing the most-frequent positive and negative words.
+
+
+The first wordcloud shows words from the negative sentiment texts and the second one shows words from the positive sentiment texts
+
+```{r}
+bw$sentresult <- 'neutral'
+bw$sentresult[bw$sentiment > 0] <- 'positive'
+bw$sentresult[bw$sentiment < 0] <- 'negative'
+
+
+bwpos <- bw[bw$sentresult == 'positive',]
+bwneg <- bw[bw$sentresult == 'negative',]
+
+```
+
+```{r}
+df_titlep <- data.frame(doc_id=row.names(bwpos),
+                       text=bwpos$blurb)
+
+df_sourcep <- DataframeSource(df_titlep)
+# Convert df_source to a corpus: df_corpus
+## Note: there are two types (VCopus vs PCorpus)
+df_corpusp <- VCorpus(df_sourcep)
+
+
+
+
+cleanp <- clean_corpus(df_corpusp)
+
+```
+
+
+```{r}
+
+
+stemmedp <- tm_map(cleanp, stemDocument)
+
+compp <- lapply(stemmedp, stemCompletion2, 
+                     dictionary=cleanp)
+```
+```{r}
+
+compp <- as.VCorpus(compp)
+dtmp <- DocumentTermMatrix(compp) 
+
+matrp <- as.matrix(dtmp)
+
+
+
+tdmp <- TermDocumentMatrix(compp)
+
+
+tmatp <- as.matrix(tdmp)
+
+
+```
+
+```{r warning=FALSE}
+tdp <- tidy(tdmp)
+
+metap <- as_data_frame(str_split_fixed(tdp$document, "_", n=3))
+
+# Merge on
+tdp <- as_data_frame(cbind(tdp, metap))
+
+
+
+ttf_idfp <-  tdp %>%
+                bind_tf_idf(term, document, count) %>%  
+                arrange(desc(tf_idf)) 
+
+
+tffp <- ttf_idfp %>% top_n(n = 1, wt = tf_idf) 
+
+
+
+set.seed(1118)
+ 
+#get rid of names
+tffp <- tffp %>% 
+  filter(!term %in% tolower(babynames$name))
+
+
+yellow_green <- brewer.pal(10, "YlGn")
+# Drop 2 faintest colors
+yellow_green <- yellow_green[-(1:2)]
+
+
+```
+
+```{r}
+df_titlen <- data.frame(doc_id=row.names(bwneg),
+                       text=bwneg$blurb)
+
+df_sourcen <- DataframeSource(df_titlen)
+# Convert df_source to a corpus: df_corpus
+## Note: there are two types (VCopus vs PCorpus)
+df_corpusn <- VCorpus(df_sourcen)
+
+
+
+
+cleann <- clean_corpus(df_corpusn)
+
+```
+
+
+```{r}
+
+
+stemmedn <- tm_map(cleann, stemDocument)
+
+compn <- lapply(stemmedn, stemCompletion2, 
+                     dictionary=cleann)
+```
+```{r}
+
+compn <- as.VCorpus(compn)
+dtmn <- DocumentTermMatrix(compn) 
+
+matrn <- as.matrix(dtmn)
+
+
+tdmn <- TermDocumentMatrix(compn)
+
+
+tmatn <- as.matrix(tdmn)
+
+
+```
+
+```{r warning=FALSE}
+tdn <- tidy(tdmn)
+
+metan <- as_data_frame(str_split_fixed(tdn$document, "_", n=3))
+
+# Merge on
+tdn <- as_data_frame(cbind(tdn, metan))
+
+
+
+ttf_idfn <-  tdn %>%
+                bind_tf_idf(term, document, count) %>%  
+                arrange(desc(tf_idf)) 
+
+
+tffn <- ttf_idfn %>% top_n(n = 1, wt = tf_idf) 
+
+
+set.seed(1118)
+ 
+#get rid of names
+tffn <- tffn %>% 
+  filter(!term %in% tolower(babynames$name))
+
+
+wordcloud(tffn$term, tffn$tf, 
+      max.words = 50, colors = yellow_green, main= "Negative")
+wordcloud(tffp$term, tffp$tf, 
+      max.words = 50, colors = yellow_green, main= "Positive")
+
+#The first wordcloud shows words from the negative sentiment texts and the second one shows words from the positive #sentiment texts
+```
+
+
+#### c) Get in their mind
+
+Now, use the NRC Word-Emotion Association Lexicon in the tidytext package to identify a larger set of emotions (anger, anticipation, disgust, fear, joy, sadness, surprise, trust). Again, visualize the relationship between the use of words from these categories and success. What is your finding?
+
+In general texts don't contain many negative words, while many contain at least one positive word. Fearful words
+are avoided as well. Projects that have 0 ratio seem to use more anticipatory words in a blurb.
+
+```{r}
+nrc <- get_sentiments("nrc")
+
+nrcjoy <- get_sentiments("nrc") %>%
+  filter(sentiment == "joy")
+
+nrcantip <- get_sentiments("nrc") %>%
+  filter(sentiment == "anticipation")
+
+tffv <- tff
+
+colnames(tffv)[1] <- "word"
+
+
+
+bing <- get_sentiments("bing")
+
+DTM_RIDdict <- dfm(tff$term, dictionary=as.dictionary(bing))
+
+
+
+NRIDdict <- dfm(tff$term, dictionary=as.dictionary(nrc))
+
+NRIDdict2 <- dfm(bw_corpus, dictionary=as.dictionary(nrc))
+
+
+dfd <- data.frame(Content = featnames(NRIDdict2), Frequency = colSums(NRIDdict2), 
+                 row.names = NULL, stringsAsFactors = FALSE)
+
+testN <- as.data.frame(NRIDdict2)
+testN$ratio <- bw$ratio
+
+testN$cat[testN$ratio == 0] <- '0'
+testN$cat[testN$ratio > 0 ] <- '1 ~ 50000'
+testN$cat[testN$ratio > 50000 ] <- '50000 ~ 100000'
+testN$cat[testN$ratio > 100000 ] <- '100000 ~ 150000'
+testN$cat[testN$ratio > 150000 ] <- '150000 ~ 200000'
+testN$cat[testN$ratio > 200000 ] <- '200000 <'
+
+
+
+```
+
+```{r warning=FALSE}
+
+g <- ggplot(testN, aes(joy ,fill=cat))
+  g + geom_bar(aes(fill=cat), width = 0.5)+
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="Histogram on Categorical Variable", 
+       subtitle="Manufacturer across Vehicle Classes") +
+   ggtitle("Joyful words and Success ratio") +  scale_fill_ptol() +
+  theme_minimal()+ scale_fill_discrete(name = "Success Ratio")
+  
+  g <- ggplot(testN, aes(fear ,fill=cat))
+  g + geom_bar(aes(fill=cat), width = 0.5)+
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="Histogram on Categorical Variable", 
+       subtitle="Manufacturer across Vehicle Classes") +
+   ggtitle("Fearful words and Success ratio") +  scale_fill_ptol() +
+  theme_minimal()+ scale_fill_discrete(name = "Success Ratio")
+  
+  g <- ggplot(testN, aes(anticipation ,fill=cat))
+  g + geom_bar(aes(fill=cat), width = 0.5)+
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="Histogram on Categorical Variable", 
+       subtitle="Manufacturer across Vehicle Classes") +
+   ggtitle("Anticipatory words and Success ratio") +  scale_fill_ptol() +
+  theme_minimal()+ scale_fill_discrete(name = "Success Ratio")
+  
+  g <- ggplot(testN, aes(positive ,fill=cat))
+  g + geom_bar(aes(fill=cat), width = 0.5)+
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="Histogram on Categorical Variable", 
+       subtitle="Manufacturer across Vehicle Classes") +
+   ggtitle("Positive words and Success ratio") +  scale_fill_ptol() +
+  theme_minimal()+ scale_fill_discrete(name = "Success Ratio")
+  
+  g <- ggplot(testN, aes(negative ,fill=cat))
+  g + geom_bar(aes(fill=cat), width = 0.5)+
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) + 
+  labs(title="Histogram on Categorical Variable", 
+       subtitle="Manufacturer across Vehicle Classes") +
+   ggtitle("Negative words and Success ratio") +  scale_fill_ptol() +
+  theme_minimal()+ scale_fill_discrete(name = "Success Ratio")
+  
+  #In general texts don't contain many negative words, while many contain at least one positive word. Fearful words
+  #are avoided as well. Projects that have 0 ratio seem to use more anticipatory words in a blurb.
+```
+
+
+## Submission
+
+Please follow the [instructions](/Exercises/homework_submission_instructions.md) to submit your homework. The homework is due on Wednesday, April 4.
+
+## Please stay honest!
+
+If you do come across something online that provides part of the analysis / code etc., please no wholesale copying of other ideas. We are trying to evaluate your abilities to visualized data not the ability to do internet searches. Also, this is an individually assigned exercise -- please keep your solution to yourself.

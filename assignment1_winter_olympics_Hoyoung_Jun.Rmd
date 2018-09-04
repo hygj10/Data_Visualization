@@ -1,0 +1,360 @@
+---
+title: "Assignment 1: Using ggplot2 for visualization"
+author: Hoyoung Jun
+date: 2017-02-19
+always_allow_html: yes
+output: 
+  html_document:
+    keep_md: true
+---
+
+Winter Olympics Medals over Time
+================================
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(stringr)
+library(plotly)
+library(rworldmap)
+library(data.table)
+library(DT)
+```
+
+Until recent decades, the Winter Olympics has been dominated by European and North American countries.
+
+```{r}
+#import data from winter.csv
+winter <- read.csv("winter.csv", stringsAsFactors = FALSE)
+
+#import data from dictionary.csv
+dict <- read.csv("dictionary.csv", stringsAsFactors = FALSE)
+
+#Replace Soviet Union with Russia.
+winter[winter$Country == "URS", "Country"] <- 'RUS'
+#Replace East and West Germany with Germany
+winter[winter$Country == "EUA", "Country"] <- "GER"
+winter[winter$Country == "FRG", "Country"] <- "GER"
+winter[winter$Country == "GDR", "Country"] <- "GER"
+
+```
+Taking a look at the tables below, we can see that the number of medals attained from countries outside Europe and North America is minimal in comparison. 
+```{r}
+#Find total number of each medal
+medals <- c(winter$Country, winter$Medal)
+m = data.frame(cbind(do.call('rbind', strsplit(winter$Country, " ")), winter$Medal))
+m <- as.data.frame(table(m$X1, m$X2))
+colnames(m) <- c("Country", "Medal", "Total")
+
+
+#find number of competitions each country medaled in
+n = data.frame(cbind(do.call('rbind', strsplit(winter$Country, " ")), winter$Year))
+n <- as.data.frame(table(n$X1, n$X2))
+n <- n[n$Freq > 0,]
+n <- n$Var1
+n <- as.data.frame(table(n))
+colnames(n) <- c("Country", "Medaled")
+
+datatable(m, options= list(), rownames = FALSE, )
+datatable(n, options= list(), rownames = FALSE)
+```
+In the barchart below, we have grouped together the best performing countries throughout the history of the Winter Olympics (Canada, Germany, Norway, Russia/Soviet Union, Sweden, and the USA) with the best performing countries outside the European and North American continent.
+```{r}
+
+most <- m
+colnames(most) <- c("Country", "Medal", "Total")
+
+
+most <- most %>%
+        arrange(-Total, Medal) %>%   # sort dataframe
+        mutate(name_factor = factor(Country, unique(Country))) # Create a factor.
+
+#change ggplot behavior and center align all titles
+theme_update(plot.title = element_text(hjust = 0.5))
+
+#plot chosen countries
+plot1 <- ggplot(subset(most, Country %in% c('USA', 'CAN', 'NOR', 'SWE', 'GER', 'RUS', 'KOR', 'CHN', 'JPN')), 
+               aes(x= Country, y= Total, fill=Medal)) + geom_bar(position = "dodge",stat ='identity')+
+    scale_fill_manual(values=c("#cd7f32", "gold", 'grey')) + ggtitle("Comparison of total medals") 
+plot1
+
+```
+
+The difference in total medals is enormous. None of the countries outside the European and North American continent come even close to any of the best performing countries. South Korea, the non-European and non-North American country with most gold medals, has roughly less than a third of the gold medals Norway has.
+Despite the difference in total medals, over the last few decades, performance and participation of non-European and non-North American countries has steadily been improving. This is especially the case for East Asian countries like South Korea, Japan, and China.
+Below we have plotted a time series graph to show the performances of these countries over time.
+```{r}
+#filter out years before 1952
+years <- c()
+i <- 0
+for (year in 1949:1993){
+  if (i < 3){
+    i <- i + 1
+  }
+  else{
+    i <- 0
+    years <- c(years, year)
+  }
+}
+for (year in 1992:2016){
+  if (i < 3){
+    i <- i + 1
+  }
+  else{
+    i <- 0
+    years <- c(years, year)
+  }
+}
+
+#Total number of medals won each year by country
+medal_count <- as.data.frame(table(winter$Country, winter$Medal, winter$Year))
+colnames(medal_count) <- c("Country", "Medal", "Year", "Total")
+medal_count <- aggregate.data.frame(medal_count$Total, by= list(medal_count$Country, medal_count$Year), FUN=sum)
+colnames(medal_count) <- c("Country", "Year", "Total")
+medal_temp <-medal_count
+medal_count <- subset(medal_count, medal_count$Year %in% years)
+
+
+#plot data
+plot2 <- ggplot(subset(medal_count, Country %in% c('USA', 'JPN', 'NOR', 'SWE', "KOR", "CHN", "FIN", "FRA", "AUS"))) + geom_line(aes(x= Year, y= Total, color=Country, group=Country),position = "dodge",stat ='identity') + scale_y_continuous(trans='log2') 
+plot2 + ggtitle("Number of total medals over time") 
+upd <- subset(medal_count, medal_count$Country %in%c('JPN',"KOR", "CHN"))
+ggplot() +
+  # draw the original data series with grey
+  geom_line(aes(Year, Total, group = Country), data = subset(medal_count, Country %in% c('USA', 'JPN', 'NOR', 'SWE', "KOR", "CHN", "FIN", "FRA","AUS")), color = alpha("grey", 0.7)) +
+  # color filtered data
+  # logartihmic graph to emphasize on the rate of growth 
+  geom_line(aes(Year, Total, color = Country, group = Country), data = upd)+ scale_y_continuous(trans='log2') + ggtitle("Improvement of performance for East Asian Countries") 
+```
+
+These two plots depict the number of medals each country has won each year. Although there is an overall increasing trend in the number of medals(due to the additional sports that get added in each competition), by taking a look at the "Improvement of performance for East Asian Countries" plot, it is easily seen that there has been a steep growth in performance for the three East Asian countries starting from 1992.
+
+
+```{r}
+med <- str_split(winter$Medal, ",")
+winter$Medal<- do.call(rbind, med)[,1]
+winter$Medal <- str_trim(winter$Medal, side="both")
+rm(med)
+table(winter$Medal)
+golden <- winter[winter$Medal == "Gold",]
+golden <- as.data.frame(table(golden$Country, golden$Medal))
+
+```
+
+Below, we have plotted the total number of gold medals won by each country on a map.
+```{r}
+
+
+gdp <- data.frame(dict$Code, dict$GDP.per.Capita)
+colnames(gdp) <- c("Country", "GDP")
+
+
+pop <- data.frame(dict$Code, dict$Population)
+colnames(pop) <- c("Country", "Population")
+
+
+#change GER to DEU to color Germany on map
+temp <- most
+most<-most[most$Medal=="Gold",]
+most[, "Country"] <- sapply(most[, "Country"], as.character)
+most$Country[most$Country == "GER"] <- "DEU"
+
+
+country <- most$Country
+data <- most$Total
+
+dF <- data.frame(country=country, data=data)
+
+#join data to a map to create a spatialPolygonsDataFrame (from StackOverflow)
+sPDF <- joinCountryData2Map(dF, joinCode='NAME', nameJoinColumn='country')
+
+#default map (see rworldmap documentation for options e.g. catMethod, numCats, colourPalette, mapRegion)
+#missingCountryCol used for NA and countries not in the join file
+ma <- mapCountryData(sPDF, nameColumnToPlot='data', mapTitle = "Gold medal performance of countries", missingCountryCol='dark grey')
+ma
+```
+
+Through this plot, we are able to easily visualize the countries that have better results in the Winter Olympics. It does not take long to realize that countries tinted in red (the ones with most medals) are all located in Europe and North America. We could theorize that geographical location (being located on the north) could be the reason for better performance, but there could be other reasons, two of them being population and GDP per Capita. It could be the case that the more people a country has, the higher chance it has to produce atheltic stars. The higher GDP per Capita a country has, the better chance people will have to buy expensive winter sports equipment and train in better facilities. Below we have plotted performace with regards to population of each country (gold medals/population).  
+```{r}
+
+pop[, "Country"] <- sapply(pop[, "Country"], as.character)
+pop$Country[pop$Country == "GER"] <- "DEU"
+m_pop <- total <- merge(pop,most,by="Country")
+
+
+m_pop[, "Country"] <- sapply(m_pop[, "Country"], as.character)
+
+m_pop$Country[m_pop$Country == "GER"] <- "DEU"
+
+country <- m_pop$Country
+data <- m_pop$Total/m_pop$Population
+
+dF <- data.frame(country=country, data=data)
+
+#join data to a map to create a spatialPolygonsDataFrame
+sPDF <- joinCountryData2Map(dF, joinCode='NAME', nameJoinColumn='country')
+
+#default map (see rworldmap documentation for options e.g. catMethod, numCats, colourPalette, mapRegion)
+#missingCountryCol used for NA and countries not in the join file
+ma <- mapCountryData(sPDF, nameColumnToPlot='data', mapTitle = "Gold medal performance with regard to population", missingCountryCol='dark grey')
+ma
+
+```
+
+Countries like the USA and Russia have been assigned a lighter color after this calculation. This means that if we were to take population in count, USA and Russia have not performed as well as Canada or Germany. Instead, South Korea is up to these countries' level.
+The plot below takes GDP per Capita into account (gold medals/GDP per capita).
+```{r}
+gdp[, "Country"] <- sapply(gdp[, "Country"], as.character)
+gdp$Country[gdp$Country == "GER"] <- "DEU"
+m_gdp <- total <- merge(gdp,most,by="Country")
+
+
+
+m_gdp[, "Country"] <- sapply(m_gdp[, "Country"], as.character)
+
+m_gdp$Country[m_gdp$Country == "GER"] <- "DEU"
+
+
+country <- m_gdp$Country
+data <- m_gdp$Total/m_gdp$GDP
+
+dF <- data.frame(country=country, data=data)
+
+#join data to a map to create a spatialPolygonsDataFrame
+sPDF <- joinCountryData2Map(dF, joinCode='NAME', nameJoinColumn='country')
+
+#default map (see rworldmap documentation for options e.g. catMethod, numCats, colourPalette, mapRegion)
+#missingCountryCol used for NA and countries not in the join file
+ma <- mapCountryData(sPDF, nameColumnToPlot='data', mapTitle = "Gold medal performance with regard to GDP per capita", missingCountryCol='dark grey')
+ma
+```
+
+The USA and Russia are back to red, but Finland has dropped to orange. In fact, according to this calculation, its performance is not as good as China's or South Korea's performance. China has been bumped up to be on par with all the other top performing countries.
+In the past, European and North American countries were better off economically than most other countries. As a result, they may have had better training, facilities, and equipment for players. However, East Asian countires have had massive economic growth over the past few decades, and now have access to better resources as well. This may be able to partially explain the progress of East Asian countires at the Winter Olypics.
+As a result of having economically advanced over the past decades, China and South Korea have acquired the rights to host the Winter Olympics. In 2018, the Winter Olympics will be held in Pyeonchang South Korea and in 2022 it will be held in Beijing, China. This is the first time two Winter Olympics will be consecutively held in Asia.
+We are curious to see if holding these events at home ground will further boost the performance of these countries. Below we have plotted a time-series graph that shows the number of medals each country has one by year divided by the total number of medals available to accurately plot the performance of a country at each event. We have plotted graphs for countries that have held the Winter Olympics at least twice.
+
+```{r echo=TRUE, eval=FALSE}
+library(rvest)
+library(stringr)
+wiki_hosts <- read_html("https://en.wikipedia.org/wiki/Winter_Olympic_Games")
+hosts <- html_table(html_nodes(wiki_hosts, "table")[[5]], fill=TRUE)
+hosts <- hosts[-1,1:3]
+hosts$city <- str_split_fixed(hosts$Host, n=2, ",")[,1]
+hosts$country <- str_split_fixed(hosts$Host, n=2, ",")[,2]
+finished_games <- head(hosts,-2)
+
+#USA, France, Austria, Canada, Japan, Italy, Norway, Switzerland
+
+#extract relevant details to a new table
+tpy <- as.data.frame(table(winter$Country, winter$Medal, winter$Year))
+colnames(tpy) <- c("Country", "Medal", "Year", "Freq")
+tpy <- aggregate.data.frame(tpy$Freq, by= list(tpy$Year), FUN=sum)
+colnames(tpy) <- c("Year", "Freq")
+medal_year <- medal_temp
+
+
+#divide number of medals by number of total medals available per year to see relative performance
+v <- cbind(medal_year[1], medal_year[-1] / tpy[match(medal_year$Year, tpy$Year), -1])
+v$Year <- medal_year$Year
+medal_year <- v
+
+
+#Performance of the US
+usa_years <- finished_games$Year[finished_games$country == " United States"]
+plot1 <- ggplot() + geom_line(data=subset(medal_year, Country %in% c('USA')), aes(x= Year, y= Total, color=Country, group=Country),position = "dodge",stat ='identity') + theme(axis.text.x = element_text(angle=90, size=rel(0.8), hjust=1)) +
+ geom_point(data=subset(subset(medal_year, Year %in% usa_years), Country %in% c('USA')), aes(x=Year, y=Total, color=Country, group=Country)) 
+plot1 + ggtitle("Yearly Performance of the USA") 
+
+#Performance of France
+fra_years <- finished_games$Year[finished_games$country == " France"]
+plotf <- ggplot() + geom_line(data=subset(medal_year, Country %in% c('FRA')), aes(x= Year, y= Total, color=Country, group=Country),position = "dodge",stat ='identity') + theme(axis.text.x = element_text(angle=90, size=rel(0.8), hjust=1)) +
+ geom_point(data=subset(subset(medal_year, Year %in% fra_years), Country %in% c('FRA')), aes(x=Year, y=Total, color=Country, group=Country)) 
+plotf + ggtitle("Yearly Performance of France")
+
+#Performance of Canada
+can_years <- finished_games$Year[finished_games$country == " Canada"]
+plotc <- ggplot() + geom_line(data=subset(medal_year, Country %in% c('CAN')), aes(x= Year, y= Total, color=Country, group=Country),position = "dodge",stat ='identity') + theme(axis.text.x = element_text(angle=90, size=rel(0.8), hjust=1)) +
+ geom_point(data=subset(subset(medal_year, Year %in% can_years), Country %in% c('CAN')), aes(x=Year, y=Total, color=Country, group=Country)) 
+plotc + ggtitle("Yearly Performance of Canada")
+
+#Performance of Italy
+ita_years <- finished_games$Year[finished_games$country == " Italy"]
+ploti <- ggplot() + geom_line(data=subset(medal_year, Country %in% c('ITA')), aes(x= Year, y= Total, color=Country, group=Country),position = "dodge",stat ='identity') + theme(axis.text.x = element_text(angle=90, size=rel(0.8), hjust=1)) +
+ geom_point(data=subset(subset(medal_year, Year %in% ita_years), Country %in% c('ITA')), aes(x=Year, y=Total, color=Country, group=Country)) 
+ploti + ggtitle("Yearly Performance of Italy")
+
+#Performance of Austria
+aut_years <- finished_games$Year[finished_games$country == " Austria"]
+plota <- ggplot() + geom_line(data=subset(medal_year, Country %in% c('AUT')), aes(x= Year, y= Total, color=Country, group=Country),position = "dodge",stat ='identity') + theme(axis.text.x = element_text(angle=90, size=rel(0.8), hjust=1)) +
+ geom_point(data=subset(subset(medal_year, Year %in%aut_years), Country %in% c('AUT')), aes(x=Year, y=Total, color=Country, group=Country)) 
+plota + ggtitle("Yearly Performance of Austria")
+#local max
+```
+
+The points on the line show the year the respective country hosted the Winter Olympics. All countries with the exception of Italy had their best performing year at their own home ground. Moreover, there is also at least a small spike of performance for each country whenever they its hosting the event at its home country (with the exception of Canada at 1988). From this, we can deduce that South Korea and China will possibly perform better when hosting the Winter Olympics.
+
+As seen in the "Improvement of performance for East Asian Countries" plot, Asian countries have started to perform drastically better starting from 1992. We want to see the reason to this. We will pay special attention to South Korea as it has won the most gold medals. 
+```{r}
+kor_sports <- as.data.frame(table(winter$Discipline, winter$Country, winter$Medal, winter$Year))
+
+
+#Get relevant values for Korea
+colnames(kor_sports) <- c("Discipline", "Country", "Medal", "Year", "Number")
+kor_sports <- kor_sports[kor_sports$Country == "KOR",]
+kor_sports <- kor_sports[kor_sports$Number > 0,]
+
+
+plotk <- ggplot(data=kor_sports, aes(x=Year, y=Number, fill=Discipline)) +
+  geom_bar(stat="identity")
+#hovering the mouse will allow users to see exact number of medals for each discipline
+ggplotly(plotk)
+```
+
+From the barchart above, it is obvious that South Korea has attained most of its medals from Short Track Speed Skating. It turns out that this discipline has been added to the Winter Olympics starting from 1992, and is the reason why South Korea has had a sudden spike in performance. However, as the year progresses, South Korea is starting to acquire medals from other discplines as well.
+
+
+Below, we have plotted another bar chart to compare the performances with the best winter atheltes of all time with the best East Asian winter athlete.
+```{r}
+ath <- as.data.frame(table(winter$Country, winter$Athlete, winter$Medal))
+ath <- ath[order(ath$Freq, decreasing = TRUE), ]
+
+#Look at number of Gold medals of athelete and extract if more than or equal to 5
+best_gold <- ath[ath$Var3 == "Gold",]
+
+bg_select <- best_gold[best_gold$Freq >= 5,]
+
+names <- bg_select$Var2
+#add Korean best athlete for comparison
+names[10] <- "CHUN, Lee-Kyung" 
+
+colnames(ath) <- c('Country','Name', 'Medal', 'Total')
+plotn <- ggplot(subset(ath, Name %in% names), 
+               aes(x= Name, y= Total, fill=Medal, label=Country)) + geom_bar(position = "dodge",stat ='identity')+
+    scale_fill_manual(values=c("#cd7f32", "gold", 'grey'))+ theme(axis.text.x = element_text(angle = 90, hjust = 1))  
+#hover over bars to see number of medals and country of origin of a player
+ggplotly(plotn)
+```
+
+At an individual scale, the best East Asian athlete (Lee-Kyung Chun) does not seem to trail too much in comparison to the best athletes of all time. 
+Ahn Hyun Soo (Viktor An) has won three gold medals and a bronze medal for South Korea, changed his nationality to Russian, and has another three gold medals and a bronze medals. If we are able to count the performance of this athlete as an individual East Asian athlete, he would have six gold medals and two bronze medals, making him one of the best winter athletes of all time.
+
+Although European and North American countries still dominate the Winter Olympics, Asian countries have relatively recently started to immerse themselves in the competition. Since 1992, their results have been improving, and as time progresses, somday they might be able to catch up with other Winter Olympic Giants. 
+
+Below we have provided a comprehensive table with all East Asian atheltes that have won medals in the Winter Olympics for those who had like to further explore East Asian performance at the Winter Olympics.
+
+```
+
+```
+```{r}
+#create table for East Asian countries
+asia_table <- winter[winter$Country %in% c("KOR", "JPN", "CHN"),]
+rownames(asia_table) <- NULL
+datatable(asia_table, options= list(), rownames = FALSE)
+```
+
+```

@@ -1,0 +1,360 @@
+---
+title: 'Assignment 2: Mapping Fire Incidents and FDNY Response Times'
+author: "Hoyoung Jun"
+date: '2017-03-07'
+output:
+  html_document:
+    keep_md: yes
+  pdf_document: default
+always_allow_html: yes
+---
+
+Fires in NYC and FDNY Response
+================================
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+
+
+```{r, eval=FALSE}
+
+fire_all <- read_csv("severe_incidents.csv") 
+fire_all$year <- substr(fire_all$INCIDENT_DATE_TIME, 7, 10)
+fire <- fire_all%>% 
+  filter(HIGHEST_LEVEL_DESC == "7 - Signal 7-5") %>%
+  filter(year==2015)
+```
+
+
+
+```{r, eval=FALSE}
+library(ggmap)
+library(stringr)
+
+# Make list of addresses
+address <- str_c( str_to_title(fire$STREET_HIGHWAY),
+                  "New York, NY",
+                  fire$ZIP_CODE,
+                  sep=", ")
+
+# Register Google API Key
+register_google(key = Sys.getenv("AIzaSyDSJJNXtkxvcO23YnZ9COQotZRvD5g5Wx8"))
+
+# Geocode Addresses
+latlong <- geocode(address, output = c("latlon"))
+
+# Merge on
+fire$Latitude  <- latlong$lat
+fire$Longitude <- latlong$lon
+
+# Save File
+write_csv(fire, "severe_incidents.csv")
+```
+
+#### FDNY Firehouse Listing
+
+NYC Open Data also provides data on the [location of all 218 firehouses in NYC](https://data.cityofnewyork.us/Public-Safety/FDNY-Firehouse-Listing/hc8x-tcnd). Relevant for our analysis are the following variables:
+
+    FacilityName, Borough, Latitude, Longitude
+
+## Tasks
+
+#### 1. Location of Severe Fires
+
+Provide a `leaflet` map of the severe fires contained in the file `severe_incidents.csv`. Ignore locations that fall outside the five boroughs of New York City. Provide at least three pieces of information on the incident in a popup. 
+```{r warning=FALSE}
+library(leaflet)
+library(tidyverse)
+
+#load fire icon from online
+fireIcons <- icons(
+  iconUrl = "https://emojipedia-us.s3.amazonaws.com/thumbs/240/facebook/111/fire_1f525.png",
+  iconWidth = 15, iconHeight = 15,
+  iconAnchorX = 7.5, iconAnchorY = 8.5
+  )
+
+#read csv 
+fire <- read.csv("severe_incidents.csv")
+m <- leaflet(fire) %>% 
+     addTiles('http://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png') %>%
+     setView(-73.9159344, 40.771, zoom = 13)
+
+#popup content
+content <- paste("Where:",fire$STREET_HIGHWAY,"<br/>",
+                 "When:",fire$INCIDENT_DATE_TIME,"<br/>",
+                 "Units on scene:",fire$UNITS_ONSCENE,"<br/>",
+                 "What:",fire$INCIDENT_TYPE_DESC,"<br/>",
+                 "Type of Property: ", fire$PROPERTY_USE_DESC, "<br/>")
+m %>% addMarkers(icon = fireIcons, popup = content)  #add icons to map
+
+
+```
+
+
+#### 2. Layers and Clusters
+
+##### a) Color by Type of Property
+
+Start with the previous map. Now, distinguish the markers of the fire locations by `PROPERTY_USE_DESC`, i.e. what kind of property was affected. If there are too many categories, collapse some categories. Choose an appropriate coloring scheme to map the locations by type of affected property. Add a legend informing the user about the color scheme. Also make sure that the information about the type of affected property is now contained in the popup information. Show this map.
+```{r warning=FALSE}
+library(RColorBrewer)
+
+#create new categories
+cats <- c("Entertainment/Activitiy Spots", "Religious Facilities", "Clubs/Clubhouses", "Public/Government Facilities",
+  "Eating/Drinking Places", "Public Transportation", "Theaters, Auditoriums, etc.", "Education Facilities",
+  "Medical Facilities", "Residence",  "Stores/Shops/Services","Businesses", "Storage", "Plants/Lab/Utilities", "Nature", "Roads, others")
+
+#assign categories according to property numbers
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 100, cats[1], NA)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 124, cats[2], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 131, cats[3], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 143, cats[4], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 150, cats[5], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 162, cats[6], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 174, cats[7], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 182, cats[8], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 241, cats[9], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 363, cats[4], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 365, cats[10], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 464, cats[11], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 581, cats[12], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 599, cats[14], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 648, cats[15], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 669, cats[14], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 700, cats[13], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 900, cats[16], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 922, cats[15], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 946, cats[16], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 981, cats[14], fire$cat)
+fire$cat <- ifelse(as.integer(substr((fire$PROPERTY_USE_DESC),0,3)) > 984, cats[16], fire$cat)
+
+#add propery category to popup
+
+content <- paste("Where:",fire$STREET_HIGHWAY,"<br/>",
+                 "When:",fire$INCIDENT_DATE_TIME,"<br/>",
+                 "Units on Scene:",fire$UNITS_ONSCENE,"<br/>",
+                 "What:",fire$INCIDENT_TYPE_DESC,"<br/>",
+                 "Type of Property: ", fire$cat, "<br/>")
+
+pal = colorFactor("Paired", domain = fire$cat) # Grab a palette
+color_prop = pal(fire$cat)
+m %>% addCircleMarkers(color = color_prop, popup = content) %>%
+  addLegend( pal = pal, values = ~fire$cat, title = "Types of Property") # Set color of points
+```
+
+
+##### b) Cluster
+
+Add marker clustering, so that zooming in will reveal the individual locations but the zoomed out map only shows the clusters. Show the map with clusters.
+```{r warning=FALSE}
+
+
+mc <- m %>%
+     setView(-73.9159344, 40.771, zoom = 11)
+
+#add clusters
+mclust <- mc %>% addCircleMarkers(color = color_prop, 
+                       popup = content,
+                       clusterOptions = markerClusterOptions())
+mclust
+```
+
+
+#### 3. Fire Houses
+
+The second data file contains the locations of the 218 firehouses in New York City. Start with the non-clustered map (2b) and now adjust the size of the circle markers by severity (`TOTAL_INCIDENT_DURATION` or `UNITS_ONSCENE` seem plausible options). More severe incidents should have larger circles on the map. On the map, also add the locations of the fire houses. Add two layers ("Incidents", "Firehouses") that allow the user to select which information to show. 
+```{r warning=FALSE}
+dep <- read_csv("FDNY_Firehouse_Listing.csv") 
+
+#load fire truck icon from online
+stationIcons <- icons(
+  iconUrl = "https://emojipedia-us.s3.amazonaws.com/thumbs/240/facebook/111/fire-engine_1f692.png",
+  iconWidth = 17, iconHeight = 17,
+  iconAnchorX = 7.5, iconAnchorY = 8.5
+  )
+
+#popup content for firehouses
+scontent <- paste("Station Name:",dep$FacilityName,"<br/>",
+                 "Address:",dep$FacilityAddress,"<br/>")
+
+pal = colorFactor("Set1", domain = fire$TOTAL_INCIDENT_DURATION) 
+
+
+#Create Leaflet map with varying CircleMarkers
+lay <- m %>%
+  addTiles() %>%
+  addProviderTiles(providers$Stamen.TonerLite, group = "Toner Lite") %>%
+  addTiles('http://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', group = "CARTO") %>%
+  addMarkers(icon= stationIcons, lat = dep$Latitude, lng = dep$Longitude, popup = scontent,  group = "Firehouses") %>%
+  addCircleMarkers(
+    radius = ~ (fire$UNITS_ONSCENE/2),
+    stroke = FALSE, fillOpacity = 0.5, group = "Incidents",popup = content
+ ) %>%
+  
+  addLayersControl(
+    baseGroups = c("OSM (default)", "Toner Lite", "CARTO"),
+    overlayGroups = c("Firehouses", "Incidents"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
+ lay
+ 
+ 
+ #Create Leaflet map with varying fire icon sizes 
+ say <- m %>%
+  addTiles() %>%
+  addProviderTiles(providers$Stamen.TonerLite, group = "Toner Lite") %>%
+  addTiles('http://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', group = "CARTO") %>%
+  addMarkers(icon= stationIcons, lat = dep$Latitude, lng = dep$Longitude, popup = scontent,  group = "Firehouses") %>%
+  addMarkers(
+    icon = icons(
+  iconUrl = "https://emojipedia-us.s3.amazonaws.com/thumbs/240/facebook/111/fire_1f525.png",
+  iconWidth = fire$UNITS_ONSCENE, iconHeight = fire$UNITS_ONSCENE,
+  iconAnchorX = 7.5, iconAnchorY = 8.5
+  ),
+     group = "Incidents",popup = content
+ ) %>%
+  
+  addLayersControl(
+    baseGroups = c("OSM (default)", "Toner Lite", "CARTO"),
+    overlayGroups = c("Firehouses", "Incidents"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
+ say
+  
+```
+
+
+#### 4. Distance from Firehouse and Response Time
+
+We now want to investigate whether the distance of the incident from the nearest firehouse varies across the city. 
+
+##### a) Calculate Distance
+
+For all incident locations, identify the nearest firehouse and calculate the distance between the firehouse and the incident location. Provide a scatter plot showing the time until the first engine arrived (the variables `INCIDENT_DATE_TIME` and `ARRIVAL_DATE_TIME`) will be helpful. If there are any interesting patterns to highlight, feel free to do so.
+
+```{r warning=FALSE}
+library(rgeos)
+library(sp)
+library(rgdal)
+library(tmap)
+library(tibble)
+
+
+#get coordinates 
+fire2 <- fire[complete.cases(fire$Latitude), ]
+dep2 <- dep[complete.cases(dep$Latitude),]
+
+coordinates(fire2) <- ~Latitude + Longitude
+coordinates(dep2) <- ~Latitude + Longitude
+
+#find nearest points of fires
+firesp <- SpatialPoints(coordinates(fire2))
+depsp <- SpatialPoints(coordinates(dep2))
+fire2$nearest_in_set2 <- apply(gDistance(firesp, depsp, byid=TRUE), 2, which.min)
+
+
+library(geosphere)
+
+vector <- c()
+
+#find distance between station and fire.
+for (id in 1:1825){
+  v <- distm(c(fire2[id,]$Longitude, fire2[id,]$Latitude), c(dep2[fire2[id,]$nearest_in_set2,]$Longitude, dep2[fire2[id,]$nearest_in_set2,]$Latitude), fun = distHaversine)
+  vector <- c(vector, v)
+}
+fire2$nearest_distance <- vector
+
+#edit time
+time_obj=strptime(fire2$INCIDENT_DATE_TIME, format = "%m/%d/%Y %H:%M:%S %p") 
+fire2$INCIDENT_DATE_TIME<-format( time_obj , format="%Y-%m-%d %H:%M:%S")
+
+time_obj=strptime(fire2$ARRIVAL_DATE_TIME, format = "%m/%d/%Y %H:%M:%S %p") 
+fire2$ARRIVAL_DATE_TIME<-format( time_obj , format="%Y-%m-%d %H:%M:%S")
+
+#find response time
+fire2$response <- difftime(fire2$INCIDENT_DATE_TIME, fire2$ARRIVAL_DATE_TIME,tz="EST", units = c("mins"))
+fire2$response[as.integer(fire2$response) > 700] <- diff(fire2$response, 720)
+fire2$response[as.integer(fire2$response) > 700] <- diff(fire2$response, 720)
+fire2$response[as.integer(fire2$response) < -700] <- diff(fire2$response, 720)
+
+
+```
+```{r warning=FALSE}
+library(ggplot2)
+library(plotly)
+library(ggthemes)
+
+dat <- data.frame(matrix(NA, nrow = 1825, ncol = 2))
+
+dat$distance <- as.numeric(fire2$nearest_distance)
+dat$response <- as.numeric(abs(fire2$response))
+
+dat$boro <- substr(fire2$BOROUGH_DESC,5,17)
+
+
+#look at data without a couple of extreme values
+
+dat2 <- dat[dat$distance < 4000,]
+dat2 <- dat2[as.numeric(dat2$response) < 15,]
+Borough <- dat2$boro
+plt <- ggplot(dat2, aes(colour = Borough, x=distance/1000, y=response)) + geom_point()+
+  ggtitle("Response time and Distance from Incident")+
+  theme(plot.title = element_text(hjust = 0.5)) + labs(x = "Distance in kilometers") + labs(y = "Response time in minutes")+ theme_hc()
+
+
+ggplotly(plt)
+
+#Most incidents within 2km of stations. Response time variance seems similar across all boroughs. Staten Island and
+#Queens seem to have more incidents that were further away from fire stations. Incidents in Manhattan seem to all
+#have stations that are closeby. Maybe because it is the most densely populated area.
+```
+
+
+##### b) Map of Response Times
+
+Provide a map visualization of response times. Feel free to differentiate by incident type / property affected etc. if that is interesting.
+
+```{r warning=FALSE}
+fire2
+
+md <- leaflet(fire2) %>% 
+     addTiles('http://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png') %>%
+     setView(-73.9949344, 40.7179112, zoom = 6)
+
+#filter out NAs from fire to match the size of fire2 and create a new response time column
+fire<-fire[complete.cases(fire$Latitude), ]
+fire$response <- abs(fire2$response)
+
+
+#add circlemarkers and labels. Round response time to the nearest whole number.
+pal = colorNumeric(c("blue", "green", "yellow", "orange", "red"), domain = 0:8) 
+color_offsel1 = pal(as.numeric(fire$response))
+m %>% addCircleMarkers(color = color_offsel1,
+                 popup = paste(as.character(round(as.numeric(fire$response)), digits = 2), "minutes", sep=" "), radius = 7, group = "Incidents") %>%
+  addMarkers(icon= stationIcons, lat = dep$Latitude, lng = dep$Longitude, popup = scontent,  group = "Firehouses") %>%
+  addLayersControl(
+    baseGroups = c("OSM (default)", "Toner Lite"),
+    overlayGroups = c("Firehouses", "Incidents"),
+    options = layersControlOptions(collapsed = FALSE) 
+  )%>%
+  addLegend(
+                   pal = pal,
+                   opacity = 1,
+                   values = 0:8,
+                   title = "Response Time in Minutes")
+
+```
+
+
+## Submission
+
+Please follow the [instructions](/Exercises/homework_submission_instructions.md) to submit your homework. The homework is due on Wednesday, March 21.
+
+## Please stay honest!
+
+If you do come across something online that provides part of the analysis / code etc., please no wholesale copying of other ideas. We are trying to evaluate your abilities to visualized data not the ability to do internet searches. Also, this is an individually assigned exercise -- please keep your solution to yourself.
